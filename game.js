@@ -193,10 +193,33 @@ function listenRoom(code) {
       }
       return;
     }
-    const room = snap.val();
+    const room = sanitizeRoom(snap.val());
     LOCAL.room = room;
     renderFromRoom(room);
   });
+}
+
+// O Firebase Realtime DB descarta arrays/objetos vazios ({}) ao salvar.
+// Isso significa que campos como teams.0, teams.1, budgets.1 etc podem
+// simplesmente não existir no snapshot recebido. Esta função garante
+// que a estrutura sempre tenha o formato esperado antes de qualquer leitura.
+function sanitizeRoom(room) {
+  room = room || {};
+  room.players = room.players || {};
+  room.players[0] = room.players[0] ?? null;
+  room.players[1] = room.players[1] ?? null;
+
+  room.budgets = room.budgets || {};
+  room.budgets[0] = room.budgets[0] ?? MAX_BUDGET;
+  room.budgets[1] = room.budgets[1] ?? MAX_BUDGET;
+
+  room.teams = room.teams || {};
+  room.teams[0] = room.teams[0] || [];
+  room.teams[1] = room.teams[1] || [];
+
+  room.pickIndex = room.pickIndex ?? 0;
+  room.status = room.status || 'waiting';
+  return room;
 }
 
 function renderFromRoom(room) {
@@ -232,7 +255,7 @@ function renderFromRoom(room) {
 // DRAFT
 // ═══════════════════════════════════════════════════════════════════════════
 
-function teamIds(room, slot) { return room.teams[slot] || []; }
+function teamIds(room, slot) { return (room.teams && room.teams[slot]) || []; }
 function teamPlayers(room, slot) { return teamIds(room, slot).map(id => LOCAL.playersById.get(id)).filter(Boolean); }
 
 function neededPositions(room, slot) {
@@ -372,6 +395,8 @@ async function doPick(playerId, slot) {
   try {
     await runTransaction(roomRef, (room) => {
       if (!room) return room;
+      room = sanitizeRoom(room); // Firebase pode ter descartado teams/budgets vazios
+
       // Revalida tudo dentro da transação (evita race condition entre os 2 clientes)
       if (DRAFT_ORDER[room.pickIndex] !== slot) return room; // não é a vez dele
       if (isPlayerTaken(room, playerId)) return room;         // já foi pego
@@ -380,7 +405,7 @@ async function doPick(playerId, slot) {
       if (!player) return room;
       if (!canPick(room, player, slot)) return room;
 
-      room.teams[slot] = [...(room.teams[slot]||[]), playerId];
+      room.teams[slot] = [...room.teams[slot], playerId];
       room.budgets[slot] -= player.valor;
       room.pickIndex += 1;
 
