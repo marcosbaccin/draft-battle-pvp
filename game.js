@@ -6,7 +6,15 @@
 const { ref, set, get, onValue, update, remove, runTransaction, onDisconnect, serverTimestamp, db } = window.FB;
 
 const MAX_BUDGET = 150_000_000;
-const DRAFT_ORDER = [0,1,1,0,0,1,1,0,0,1,0]; // snake draft, 11 picks
+const TOTAL_PICKS = 22; // 11 jogadores por time × 2 times
+// Snake draft correto: 0,1,1,0, 0,1,1,0, ... — alterna quem abre cada par de picks
+const DRAFT_ORDER = [];
+(function buildDraftOrder() {
+  for (let round = 0; round < 11; round++) {
+    if (round % 2 === 0) DRAFT_ORDER.push(0, 1);
+    else                  DRAFT_ORDER.push(1, 0);
+  }
+})();
 const SLOTS_REQUIRED = { GK:1, DEF:4, MID:3, FWD:3 };
 const SLOT_ORDER = ['GK','DEF','DEF','DEF','DEF','MID','MID','MID','FWD','FWD','FWD'];
 const ROOM_TTL_MS = 1000 * 60 * 60 * 2; // salas expiram em 2h (limpeza client-side best-effort)
@@ -287,12 +295,17 @@ function renderDraftUI(room) {
   $('budget-p1').textContent = fmtBudget(room.budgets[0]);
   $('budget-p2').textContent = fmtBudget(room.budgets[1]);
   $('turn-bar').className = `turn-indicator turn-p${currentSlot+1}`;
-  $('round-label').textContent = `${Math.min(room.pickIndex+1,11)}/11`;
+  // Mostra a rodada como "pick individual do jogador atual" / 11 — não o índice total
+  const picksDoneBySlot0 = teamIds(room, 0).length;
+  const picksDoneBySlot1 = teamIds(room, 1).length;
+  const currentSlotForLabel = DRAFT_ORDER[room.pickIndex] ?? 0;
+  const myCurrentPickNum = (currentSlotForLabel === 0 ? picksDoneBySlot0 : picksDoneBySlot1) + 1;
+  $('round-label').textContent = `${Math.min(myCurrentPickNum,11)}/11`;
 
   renderSlotsDots(room);
   renderTeamPanel(room);
 
-  if (room.pickIndex >= 11) return; // draft completo, aguardando transição p/ sim
+  if (room.pickIndex >= TOTAL_PICKS) return; // draft completo, aguardando transição p/ sim
 
   // Overlay de troca de vez — reseta sempre que o pickIndex muda,
   // independente de quem fez a jogada (host ou rival)
@@ -312,7 +325,8 @@ function renderDraftUI(room) {
 function showTurnOverlay(room, currentSlot, myTurn) {
   $('turn-overlay').classList.remove('hidden');
   const need = neededPositions(room, currentSlot);
-  const pickNum = room.pickIndex + 1;
+  // Número do pick É do jogador atual (1-11), não o índice total da partida (1-22)
+  const pickNum = teamIds(room, currentSlot).length + 1;
 
   if (myTurn) {
     $('to-label').textContent = 'Sua vez!';
@@ -409,7 +423,7 @@ async function doPick(playerId, slot) {
       room.budgets[slot] -= player.valor;
       room.pickIndex += 1;
 
-      if (room.pickIndex >= 11) {
+      if (room.pickIndex >= TOTAL_PICKS) {
         room.status = 'simulating';
       }
       return room;
